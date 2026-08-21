@@ -1,0 +1,98 @@
+services:
+  # 1. PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: bib_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bib_user
+      POSTGRES_PASSWORD: bib_password
+      POSTGRES_DB: brand_intel_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bib_user -d brand_intel_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. TrustLens-AI Engine (abhishekayu/trustlens-ai service)
+  trustlens_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bib_trustlens
+    restart: unless-stopped
+    command: ["python", "mock_trustlens/main.py"]
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # 3. Main Brand Intelligence Backend (BIB) FastAPI Service
+  bib:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bib_fastapi
+    restart: unless-stopped
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://bib_user:bib_password@db:5432/brand_intel_db
+      - TRUSTLENS_BASE_URL=http://trustlens_service:8001
+      - ANTIGRAVITY_BASE_URL=https://antigravity.example.com
+      - ANTIGRAVITY_API_KEY=ag_sec_key_demo123456789
+      - RISK_THRESHOLD_FOR_ANTIGRAVITY=70
+      - BRAND_LIST=["google", "microsoft", "paypal", "apple", "netflix"]
+      - OPENSQUAT_CRON_SCHEDULE=0 0 * * *
+      - DATA_DIR=/app/data
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - .:/app
+      - scan_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      trustlens_service:
+        condition: service_started
+
+  # 4. openSquat Background Ingestion Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bib_worker
+    restart: unless-stopped
+    command: ["python", "workers/opensquat_job.py", "--watch"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://bib_user:bib_password@db:5432/brand_intel_db
+      - TRUSTLENS_BASE_URL=http://trustlens_service:8001
+      - ANTIGRAVITY_BASE_URL=https://antigravity.example.com
+      - ANTIGRAVITY_API_KEY=ag_sec_key_demo123456789
+      - RISK_THRESHOLD_FOR_ANTIGRAVITY=70
+      - BRAND_LIST=["google", "microsoft", "paypal", "apple", "netflix"]
+      - DATA_DIR=/app/data
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - .:/app
+      - scan_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      trustlens_service:
+        condition: service_started
+
+volumes:
+  postgres_data:
+    driver: local
+  scan_data:
+    driver: local

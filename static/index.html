@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Defend AI | URL Threat & Brand Intelligence Search</title>
+  <meta name="description" content="Instant explainable AI URL threat scanner for typosquatting, brand impersonation, and phishing detection." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- Ambient background glow -->
+  <div class="glow-sphere sphere-1"></div>
+  <div class="glow-sphere sphere-2"></div>
+
+  <div class="app-layout">
+    
+    <!-- Top Header -->
+    <header class="top-nav">
+      <div class="brand-logo">
+        <div class="logo-shield">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </div>
+        <div class="brand-titles">
+          <span class="logo-title">DEFEND<span class="cyan-gradient">AI</span></span>
+          <span class="logo-subtitle">URL Threat & Anti-Impersonation Engine</span>
+        </div>
+      </div>
+
+      <div class="status-indicators">
+        <div class="status-badge online">
+          <span class="dot-pulse"></span>
+          <span>TrustLens-AI: <strong>Connected</strong></span>
+        </div>
+        <div class="status-badge purple">
+          <span>Antigravity: <strong>Sync Active</strong></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Hero & URL Search Box -->
+    <main class="main-container">
+      
+      <section class="hero-section">
+        <h1 class="hero-title">
+          Analyze Any URL for <span class="cyan-gradient">Brand Impersonation</span> & Phishing
+        </h1>
+        <p class="hero-subtitle">
+          Powered by <strong>openSquat</strong> typosquatting algorithms and <strong>TrustLens-AI</strong> multi-engine explainable URL intelligence.
+        </p>
+
+        <!-- Search Input Bar -->
+        <form id="url-search-form" class="search-form">
+          <div class="search-input-wrapper">
+            <div class="search-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+            </div>
+            <input 
+              type="text" 
+              id="url-input" 
+              class="url-input" 
+              placeholder="Enter domain or URL (e.g., https://paypa1-security-login.com)" 
+              autocomplete="off" 
+              required 
+            />
+            <button type="submit" id="btn-submit-search" class="btn-analyze">
+              <span class="btn-text">Analyze URL</span>
+              <span class="btn-loader hidden"></span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Quick Sample Targets -->
+        <div class="quick-samples">
+          <span class="samples-label">Try sample lookalikes:</span>
+          <button type="button" class="sample-chip" data-url="https://paypa1-secure-login.com">paypa1-secure-login.com</button>
+          <button type="button" class="sample-chip" data-url="https://apple-id-verify.site">apple-id-verify.site</button>
+          <button type="button" class="sample-chip" data-url="https://netfliix-billing.co">netfliix-billing.co</button>
+          <button type="button" class="sample-chip" data-url="https://google.com">google.com</button>
+        </div>
+      </section>
+
+      <!-- Analysis Results Section (Populated dynamically) -->
+      <section id="results-section" class="results-section hidden">
+        
+        <!-- Result Header Card -->
+        <div class="result-header-card" id="result-header-card">
+          <div class="target-meta">
+            <div class="brand-pill" id="res-brand-badge">Detected Brand: --</div>
+            <h2 id="res-target-url" class="target-url-text">https://...</h2>
+            <div class="meta-row">
+              <span class="meta-item">Domain Similarity: <strong id="res-similarity-val">--</strong></span>
+              <span class="meta-item">Trust Score: <strong id="res-trust-val">--</strong></span>
+              <span class="meta-item">Antigravity: <strong id="res-antigravity-val" class="mono text-cyan">--</strong></span>
+            </div>
+          </div>
+
+          <div class="risk-gauge-container">
+            <div class="risk-gauge" id="res-risk-gauge">
+              <span id="res-risk-score" class="gauge-number">0</span>
+            </div>
+            <div class="risk-level-tag" id="res-risk-level">HIGH RISK</div>
+          </div>
+        </div>
+
+        <!-- Two Column Intelligence View -->
+        <div class="intel-grid">
+          
+          <!-- Left: Explainable Reasons -->
+          <div class="intel-card">
+            <div class="intel-card-header">
+              <div class="header-icon red">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              </div>
+              <h3>Explainable Threat Signals</h3>
+            </div>
+            <ul id="res-reasons-list" class="reasons-list">
+              <!-- Injected by JS -->
+            </ul>
+          </div>
+
+          <!-- Right: Multi-Engine Telemetry -->
+          <div class="intel-card">
+            <div class="intel-card-header">
+              <div class="header-icon cyan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                  <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                  <line x1="6" y1="6" x2="6.01" y2="6"/>
+                  <line x1="6" y1="18" x2="6.01" y2="18"/>
+                </svg>
+              </div>
+              <h3>TrustLens-AI Engine Telemetry</h3>
+            </div>
+
+            <div class="engine-telemetry-grid">
+              <div class="telemetry-box">
+                <span class="tel-label">SSL Certificate Profile</span>
+                <div id="tel-ssl" class="tel-value mono">--</div>
+              </div>
+              <div class="telemetry-box">
+                <span class="tel-label">DNS & Infrastructure</span>
+                <div id="tel-dns" class="tel-value mono">--</div>
+              </div>
+              <div class="telemetry-box">
+                <span class="tel-label">Content & Credential Theft</span>
+                <div id="tel-content" class="tel-value mono">--</div>
+              </div>
+              <div class="telemetry-box">
+                <span class="tel-label">Visual Brand Match</span>
+                <div id="tel-brand" class="tel-value mono">--</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Visual Landing Page Evidence -->
+        <div class="visual-card">
+          <div class="visual-header">
+            <div class="browser-dots">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+            </div>
+            <span id="visual-url-display" class="browser-address">https://...</span>
+            <span class="badge-evidence">TrustLens Visual Snapshot</span>
+          </div>
+
+          <div class="visual-body">
+            <div class="mock-capture-box">
+              <div class="mock-warning-strip">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span>Automated Threat Inspection Capture</span>
+              </div>
+              <div class="mock-form-card">
+                <div id="mock-form-title" class="mock-title">Protected Account Verification</div>
+                <div class="mock-field">Enter Email or Username</div>
+                <div class="mock-field">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</div>
+                <div class="mock-submit">Verify Account Security</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="visual-footer">
+            <button type="button" id="btn-dispatch-takedown" class="btn-action danger">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
+              Dispatch Antigravity Takedown
+            </button>
+            <button type="button" id="btn-retest-target" class="btn-action secondary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              Re-Scan Target
+            </button>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="simple-footer">
+      <span>Defend AI &bull; Autonomous Brand Threat Defense</span>
+      <div class="footer-links">
+        <a href="/docs" target="_blank">Swagger OpenAPI</a>
+        <a href="/health" target="_blank">System Health</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
