@@ -72,6 +72,7 @@ class Case(Base):
     """
     Synthesized security case combining domain squatting signals with
     explainable deep URL inspection from TrustLens-AI.
+    Pipeline fields: threat_dna, campaign_id, mutation_class, intent_class.
     """
     __tablename__ = "cases"
 
@@ -80,11 +81,16 @@ class Case(Base):
     channel = Column(String(50), default="web_domain", index=True)
     target = Column(String(512), nullable=False, index=True)  # e.g., https://paypa1-secure-login.com
     risk_score = Column(Integer, nullable=False, index=True)  # 0 to 100
-    risk_level = Column(String(20), nullable=False, index=True)  # LOW, MEDIUM, HIGH, UNKNOWN
+    risk_level = Column(String(20), nullable=False, index=True)  # LOW, MEDIUM, HIGH, CRITICAL, UNKNOWN
     reasons = Column(JSON, nullable=False, default=list)  # Combined human-readable explanation strings
     evidence = Column(JSON, nullable=False, default=dict)  # Screenshot, HTML snapshot, DNS, SSL, engine details
     analysis_complete = Column(Boolean, default=True, index=True)
     antigravity_event_id = Column(String(100), nullable=True, index=True)
+    # Pipeline stage outputs
+    threat_dna = Column(String(255), nullable=True, index=True)    # e.g. phishing_keyword:paypal:credential_harvest:HIGH
+    campaign_id = Column(String(64), nullable=True, index=True)    # e.g. camp_a3f2b19c
+    mutation_class = Column(String(64), nullable=True)             # homoglyph | omission | phishing_keyword | ...
+    intent_class = Column(String(64), nullable=True)               # phishing | informational | benign | ...
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     # Relationships

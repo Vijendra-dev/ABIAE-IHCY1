@@ -11,7 +11,6 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import BaseModel, Field
-import tldextract
 
 from config import settings
 from db import get_db, AsyncSessionLocal
@@ -24,8 +23,6 @@ from schemas import (
     AntigravityRiskEventPayload,
 )
 from services.opensquat_runner import OpenSquatRunner
-from services.trustlens_client import TrustLensClient
-from services.scoring import RiskScorer
 from services.antigravity_client import AntigravityClient
 from tasks.process_domains import DomainThreatProcessor
 
@@ -211,118 +208,68 @@ class InspectUrlRequest(BaseModel):
 @router.post(
     "/inspect-url",
     summary="Inspect a single URL immediately",
-    description="Analyzes an arbitrary URL or domain for typosquatting/brand lookalike similarity, deep TrustLens-AI intelligence, and combined risk score.",
+    description=(
+        "Runs the full 9-stage modular analysis pipeline: official domain check, brand detection, "
+        "typosquat classification, content/intent analysis, credential form detection, risk engine "
+        "(with explicit risk reducers), Threat DNA fingerprinting, and campaign linking."
+    ),
 )
 async def inspect_single_url(
     req: InspectUrlRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    from services.pipeline.orchestrator import run_pipeline
+
     raw_url = req.url.strip()
     if not raw_url:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
 
-    if not raw_url.startswith("http://") and not raw_url.startswith("https://"):
-        target_url = f"https://{raw_url}"
-        domain_str = raw_url
-    else:
-        target_url = raw_url
-        domain_str = raw_url.split("://")[-1].split("/")[0]
+    # Run the full modular pipeline
+    result = await run_pipeline(url=raw_url, db=db)
 
-    # Extract domain label
-    ext = tldextract.extract(domain_str)
-    domain_label = ext.domain.lower()
-
-    # Find highest matching brand from configured or popular brands
-    runner = OpenSquatRunner()
-    brands = settings.BRAND_LIST if isinstance(settings.BRAND_LIST, list) else ["google", "paypal", "microsoft", "apple", "netflix"]
-    # Also add default major brands if not present
-    all_brands = list(set(brands + ["paypal", "apple", "google", "microsoft", "netflix", "amazon", "facebook", "instagram", "chase", "bankofamerica"]))
-
-    best_brand = "Unknown"
-    best_sim = 0.0
-    for b in all_brands:
-        sim = runner.calculate_similarity(b, domain_str)
-        if sim > best_sim:
-            best_sim = sim
-            best_brand = b
-
-    if best_sim < 0.35:
-        best_brand = "None / Generic"
-        best_sim = 0.10
-
-    # 2. Call TrustLens-AI
-    trustlens_client = TrustLensClient()
-    trustlens_res = await trustlens_client.analyze_url(target_url)
-    is_available = bool(trustlens_res.get("success", False)) and not bool(trustlens_res.get("fallback", False))
-
-    trust_score = trustlens_res.get("trustScore")
-    trust_reasons = trustlens_res.get("reasons", [])
-    engine_details = trustlens_res.get("engines", {})
-
-    # 3. Risk scoring
-    vt_reputation = {
-        "malicious_votes": 2 if best_sim >= 0.85 else 0,
-        "suspicious_votes": 3 if best_sim >= 0.70 else 1,
-        "categories": ["phishing", "brand-squatting"] if best_sim >= 0.75 else ["general-web"]
-    }
-
-    risk_score, risk_level = RiskScorer.calculate_combined_risk(
-        similarity_score=best_sim,
-        trustlens_score=trust_score,
-        vt_reputation=vt_reputation,
-        engine_details=engine_details,
-        trustlens_available=is_available,
-    )
-
-    combined_reasons = RiskScorer.aggregate_reasons(
-        brand=best_brand,
-        domain=domain_str,
-        similarity_score=best_sim,
-        trustlens_reasons=trust_reasons,
-        vt_reputation=vt_reputation,
-        engine_details=engine_details,
-        trustlens_available=is_available,
-    )
-
-    evidence_obj = RiskScorer.build_evidence_package(
-        domain=domain_str,
-        brand=best_brand,
-        similarity_score=best_sim,
-        registration_date="Active / Observed",
-        vt_reputation=vt_reputation,
-        trustlens_data=trustlens_res,
-    )
-
-    # 4. Save or update Case in DB
-    case_stmt = select(Case).where(Case.target == target_url)
+    # Save / update Case in DB with all pipeline fields
+    case_stmt = select(Case).where(Case.target == result.target_url)
     case_res = await db.execute(case_stmt)
     case = case_res.scalars().first()
 
     antigravity_event_id = None
+
     if not case:
         case = Case(
             channel="web_domain",
-            target=target_url,
-            risk_score=risk_score,
-            risk_level=risk_level,
-            reasons=combined_reasons,
-            evidence=evidence_obj,
-            analysis_complete=is_available,
+            target=result.target_url,
+            risk_score=result.risk_score,
+            risk_level=result.risk_level,
+            reasons=result.reasons,
+            evidence=result.evidence,
+            analysis_complete=result.analysis_complete,
+            threat_dna=result.threat_dna,
+            campaign_id=result.campaign_id,
+            mutation_class=result.mutation_class,
+            intent_class=result.intent_class,
         )
         db.add(case)
         await db.commit()
         await db.refresh(case)
     else:
-        case.risk_score = risk_score
-        case.risk_level = risk_level
-        case.reasons = combined_reasons
-        case.evidence = evidence_obj
-        case.analysis_complete = is_available
+        case.risk_score = result.risk_score
+        case.risk_level = result.risk_level
+        case.reasons = result.reasons
+        case.evidence = result.evidence
+        case.analysis_complete = result.analysis_complete
+        case.threat_dna = result.threat_dna
+        case.campaign_id = result.campaign_id
+        case.mutation_class = result.mutation_class
+        case.intent_class = result.intent_class
         await db.commit()
         await db.refresh(case)
 
-    # Dispatch to Antigravity only when deep analysis is complete and above threshold
-    if is_available and risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY and not case.antigravity_event_id:
+    # Dispatch to Antigravity only when analysis is complete and above threshold
+    if (
+        result.analysis_complete
+        and result.risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY
+        and not case.antigravity_event_id
+    ):
         ag_client = AntigravityClient()
         event_payload = AntigravityRiskEventPayload(
             case_id=case.id,
@@ -340,17 +287,28 @@ async def inspect_single_url(
         await db.refresh(case)
 
     return {
+        # Core fields (preserved for backward compatibility)
         "id": case.id,
-        "target": target_url,
-        "domain": domain_str,
-        "brand_detected": best_brand,
-        "similarity_score": best_sim,
-        "trust_score": trust_score,
-        "risk_score": risk_score,
-        "risk_level": risk_level,
-        "reasons": combined_reasons,
-        "evidence": evidence_obj,
-        "analysis_complete": is_available,
+        "target": result.target_url,
+        "domain": result.domain,
+        "brand_detected": result.brand_detected,
+        "similarity_score": result.similarity_score,
+        "trust_score": result.trust_score,
+        "risk_score": result.risk_score,
+        "risk_level": result.risk_level,
+        "reasons": result.reasons,
+        "evidence": result.evidence,
+        "analysis_complete": result.analysis_complete,
         "antigravity_event_id": case.antigravity_event_id,
+        # Pipeline enrichment fields
+        "pipeline_stages": result.pipeline_stages,
+        "signals": result.signals,
+        "risk_reducers": result.risk_reducers,
+        "threat_dna": result.threat_dna,
+        "campaign_id": result.campaign_id,
+        "campaign_hits": result.campaign_hits,
+        "mutation_class": result.mutation_class,
+        "intent_class": result.intent_class,
+        "is_official": result.is_official,
+        "is_news": result.is_news,
     }
-

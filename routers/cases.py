@@ -10,14 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from db import get_db
-from models import Case, DomainThreat
+from models import Case
 from schemas import (
     CaseListResponse,
     CaseResponse,
     AntigravityRiskEventPayload,
 )
-from services.trustlens_client import TrustLensClient
-from services.scoring import RiskScorer
 from services.antigravity_client import AntigravityClient
 
 logger = logging.getLogger(__name__)
@@ -33,7 +31,7 @@ router = APIRouter(prefix="/cases", tags=["Cases"])
 async def list_cases(
     risk_level: Optional[str] = Query(
         None,
-        description="Filter by risk level category: LOW, MEDIUM, or HIGH"
+        description="Filter by risk level category: LOW, MEDIUM, HIGH, or CRITICAL"
     ),
     channel: Optional[str] = Query(
         None,
@@ -47,7 +45,7 @@ async def list_cases(
     ),
     search: Optional[str] = Query(
         None,
-        description="Search substring in target URL or reasons"
+        description="Search substring in target URL"
     ),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -88,7 +86,7 @@ async def list_cases(
     "/{case_id}",
     response_model=CaseResponse,
     summary="Get case details and evidence",
-    description="Fetch a detailed brand threat case dossier including visual screenshot, DOM snapshot, SSL/DNS telemetry, and explainable reasons.",
+    description="Fetch a detailed brand threat case dossier including explainable reasons, Threat DNA, and campaign context.",
 )
 async def get_case(
     case_id: str,
@@ -110,13 +108,19 @@ async def get_case(
 @router.post(
     "/{case_id}/re-evaluate",
     response_model=CaseResponse,
-    summary="Re-evaluate case with TrustLens and sync to Antigravity",
-    description="Manually re-triggers TrustLens-AI inspection for the target URL, recalculates risk score, and dispatches to Antigravity if above threshold.",
+    summary="Re-evaluate case with full modular pipeline",
+    description=(
+        "Manually re-triggers the full 9-stage analysis pipeline for the target URL, "
+        "recalculates risk score with explicit risk reducers, updates Threat DNA and campaign "
+        "linking, and dispatches to Antigravity if above threshold."
+    ),
 )
 async def reevaluate_case(
     case_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    from services.pipeline.orchestrator import run_pipeline
+
     stmt = select(Case).where(Case.id == case_id)
     res = await db.execute(stmt)
     case = res.scalars().first()
@@ -127,67 +131,25 @@ async def reevaluate_case(
             detail=f"Case with ID '{case_id}' was not found",
         )
 
-    # Get linked DomainThreat if present
-    similarity_score = 0.8
-    brand = "Unknown"
-    registration_date = None
-    vt_reputation = {}
+    # Run full pipeline on the case target URL
+    result = await run_pipeline(url=case.target, db=db, existing_case_id=case_id)
 
-    if case.threat_id:
-        t_stmt = select(DomainThreat).where(DomainThreat.id == case.threat_id)
-        t_res = await db.execute(t_stmt)
-        threat = t_res.scalars().first()
-        if threat:
-            similarity_score = threat.similarity_score
-            brand = threat.brand
-            registration_date = threat.registration_date
-            vt_reputation = threat.vt_reputation or {}
+    # Update case with all pipeline outputs
+    case.risk_score = result.risk_score
+    case.risk_level = result.risk_level
+    case.reasons = result.reasons
+    case.evidence = result.evidence
+    case.analysis_complete = result.analysis_complete
+    case.threat_dna = result.threat_dna
+    case.campaign_id = result.campaign_id
+    case.mutation_class = result.mutation_class
+    case.intent_class = result.intent_class
 
-    # Call TrustLens
-    trustlens_client = TrustLensClient()
-    trustlens_res = await trustlens_client.analyze_url(case.target)
-    is_available = bool(trustlens_res.get("success", False)) and not bool(trustlens_res.get("fallback", False))
-
-    trust_score = trustlens_res.get("trustScore")
-    trust_reasons = trustlens_res.get("reasons", [])
-    engine_details = trustlens_res.get("engines", {})
-
-    # Re-calculate
-    new_risk_score, new_risk_level = RiskScorer.calculate_combined_risk(
-        similarity_score=similarity_score,
-        trustlens_score=trust_score,
-        vt_reputation=vt_reputation,
-        engine_details=engine_details,
-        trustlens_available=is_available,
-    )
-
-    combined_reasons = RiskScorer.aggregate_reasons(
-        brand=brand,
-        domain=case.target.replace("https://", "").replace("http://", ""),
-        similarity_score=similarity_score,
-        trustlens_reasons=trust_reasons,
-        vt_reputation=vt_reputation,
-        engine_details=engine_details,
-        trustlens_available=is_available,
-    )
-
-    evidence_obj = RiskScorer.build_evidence_package(
-        domain=case.target.replace("https://", "").replace("http://", ""),
-        brand=brand,
-        similarity_score=similarity_score,
-        registration_date=registration_date or "N/A",
-        vt_reputation=vt_reputation,
-        trustlens_data=trustlens_res,
-    )
-
-    case.risk_score = new_risk_score
-    case.risk_level = new_risk_level
-    case.reasons = combined_reasons
-    case.evidence = evidence_obj
-    case.analysis_complete = is_available
-
-    # Check Antigravity dispatch only if analysis is complete and meets threshold
-    if is_available and new_risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY:
+    # Antigravity dispatch if warranted
+    if (
+        result.analysis_complete
+        and result.risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY
+    ):
         antigravity_client = AntigravityClient()
         event_payload = AntigravityRiskEventPayload(
             case_id=case.id,

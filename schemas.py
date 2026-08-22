@@ -112,6 +112,26 @@ class TrustLensAnalyzeResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Pipeline Signal & Reducer Schemas
+# ---------------------------------------------------------------------------
+class PipelineSignal(BaseModel):
+    stage: str
+    signal: str
+    label: str
+    value: Any = None
+    severity: str = "MEDIUM"
+    score_contribution: Optional[int] = None
+
+
+class RiskReducer(BaseModel):
+    id: str
+    label: str
+    applied: bool
+    score_delta: int          # ≤ 0 when applied
+    reason: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Case Schemas
 # ---------------------------------------------------------------------------
 class CaseEvidence(BaseModel):
@@ -137,6 +157,11 @@ class CaseResponse(BaseModel):
     evidence: Dict[str, Any]
     analysis_complete: bool = True
     antigravity_event_id: Optional[str] = None
+    # Pipeline enrichment fields (optional — not present on legacy cases)
+    threat_dna: Optional[str] = None
+    campaign_id: Optional[str] = None
+    mutation_class: Optional[str] = None
+    intent_class: Optional[str] = None
     created_at: datetime
 
 

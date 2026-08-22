@@ -1,7 +1,8 @@
 """
 Domain Threat Ingestion and Processing Pipeline.
-Ingests openSquat findings, executes TrustLens-AI analysis, computes unified risk,
-persists Case records, and routes qualifying alerts to Antigravity.
+Ingests openSquat findings, runs the modular analysis pipeline per domain,
+persists Case records with Threat DNA + campaign linking, and routes
+qualifying alerts to Antigravity.
 """
 
 import json
@@ -13,9 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from models import DomainThreat, Case, ScanRecord
 from schemas import AntigravityRiskEventPayload
-from services.trustlens_client import TrustLensClient
-from services.scoring import RiskScorer
 from services.antigravity_client import AntigravityClient
+from services.pipeline.orchestrator import run_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +23,13 @@ logger = logging.getLogger(__name__)
 class DomainThreatProcessor:
     """
     Orchestrates the lifecycle of detected brand lookalike domains:
-    openSquat -> DomainThreat (PENDING_ANALYSIS) -> TrustLens -> Case -> Antigravity.
+    openSquat → DomainThreat → Pipeline (brand, typosquat, content, risk, DNA, campaign) → Case → Antigravity.
     """
 
     def __init__(
         self,
-        trustlens_client: Optional[TrustLensClient] = None,
         antigravity_client: Optional[AntigravityClient] = None,
     ):
-        self.trustlens_client = trustlens_client or TrustLensClient()
         self.antigravity_client = antigravity_client or AntigravityClient()
 
     async def ingest_and_process_scan(
@@ -42,6 +40,7 @@ class DomainThreatProcessor:
     ) -> List[Case]:
         """
         Processes a batch of openSquat threats for a given scan run.
+        Runs the full 9-stage pipeline per domain.
         """
         created_cases: List[Case] = []
 
@@ -52,12 +51,13 @@ class DomainThreatProcessor:
             brand = threat_item.get("brand", "").strip().lower()
             similarity_score = float(threat_item.get("similarity_score", 0.0))
             registration_date = threat_item.get("registration_date")
-            vt_reputation = threat_item.get("vt_reputation", {})
 
-            if not domain or not brand:
+            if not domain:
                 continue
 
-            # 1. Check if DomainThreat already exists
+            target_url = f"https://{domain}"
+
+            # 1. Persist / update DomainThreat record
             stmt = select(DomainThreat).where(DomainThreat.domain == domain)
             res = await session.execute(stmt)
             threat = res.scalars().first()
@@ -69,7 +69,7 @@ class DomainThreatProcessor:
                     brand=brand,
                     similarity_score=similarity_score,
                     registration_date=registration_date,
-                    vt_reputation=vt_reputation,
+                    vt_reputation=threat_item.get("vt_reputation", {}),
                     status="PENDING_ANALYSIS",
                 )
                 session.add(threat)
@@ -80,67 +80,24 @@ class DomainThreatProcessor:
                 threat.status = "PENDING_ANALYSIS"
                 await session.flush()
 
-            # 2. Analyze URL with TrustLens-AI
-            target_url = f"https://{domain}"
+            # 2. Run full modular analysis pipeline
             threat.status = "ANALYZING"
             await session.flush()
 
             try:
-                trustlens_result = await self.trustlens_client.analyze_url(target_url)
-                is_available = bool(trustlens_result.get("success", False)) and not bool(trustlens_result.get("fallback", False))
-                trust_score = trustlens_result.get("trustScore")
-                trust_reasons = trustlens_result.get("reasons", [])
-                engine_details = trustlens_result.get("engines", {})
-
-                threat.trustlens_score = trust_score
-                threat.trustlens_reasons = trust_reasons
-                threat.status = "ANALYZED" if is_available else "TRUSTLENS_UNAVAILABLE"
+                result = await run_pipeline(url=target_url, db=session)
+                threat.trustlens_score = result.trust_score
+                threat.trustlens_reasons = result.reasons
+                threat.status = "ANALYZED" if result.analysis_complete else "TRUSTLENS_UNAVAILABLE"
             except Exception as e:
-                logger.error("Error analyzing %s with TrustLens-AI: %s", target_url, e)
-                threat.status = "TRUSTLENS_UNAVAILABLE"
-                is_available = False
-                trust_score = None
-                trust_reasons = [f"TrustLens automated analysis failed: {str(e)}"]
-                engine_details = {"unavailable": True}
-                trustlens_result = {
-                    "trustScore": None,
-                    "reasons": trust_reasons,
-                    "engines": {"unavailable": True},
-                    "success": False,
-                    "fallback": True,
-                }
+                logger.error("Pipeline error for %s: %s", target_url, e)
+                threat.status = "FAILED"
+                await session.flush()
+                continue
 
             await session.flush()
 
-            # 3. Calculate Combined Case Risk Score & Reasons
-            risk_score, risk_level = RiskScorer.calculate_combined_risk(
-                similarity_score=similarity_score,
-                trustlens_score=trust_score,
-                vt_reputation=vt_reputation,
-                engine_details=engine_details,
-                trustlens_available=is_available,
-            )
-
-            combined_reasons = RiskScorer.aggregate_reasons(
-                brand=brand,
-                domain=domain,
-                similarity_score=similarity_score,
-                trustlens_reasons=trust_reasons,
-                vt_reputation=vt_reputation,
-                engine_details=engine_details,
-                trustlens_available=is_available,
-            )
-
-            evidence_obj = RiskScorer.build_evidence_package(
-                domain=domain,
-                brand=brand,
-                similarity_score=similarity_score,
-                registration_date=registration_date,
-                vt_reputation=vt_reputation,
-                trustlens_data=trustlens_result,
-            )
-
-            # 4. Create or Update Case Record
+            # 3. Create or update Case record with all pipeline fields
             case_stmt = select(Case).where(Case.target == target_url)
             case_res = await session.execute(case_stmt)
             case = case_res.scalars().first()
@@ -150,25 +107,37 @@ class DomainThreatProcessor:
                     threat_id=threat.id,
                     channel="web_domain",
                     target=target_url,
-                    risk_score=risk_score,
-                    risk_level=risk_level,
-                    reasons=combined_reasons,
-                    evidence=evidence_obj,
-                    analysis_complete=is_available,
+                    risk_score=result.risk_score,
+                    risk_level=result.risk_level,
+                    reasons=result.reasons,
+                    evidence=result.evidence,
+                    analysis_complete=result.analysis_complete,
+                    threat_dna=result.threat_dna,
+                    campaign_id=result.campaign_id,
+                    mutation_class=result.mutation_class,
+                    intent_class=result.intent_class,
                 )
                 session.add(case)
                 await session.flush()
             else:
-                case.risk_score = risk_score
-                case.risk_level = risk_level
-                case.reasons = combined_reasons
-                case.evidence = evidence_obj
-                case.analysis_complete = is_available
+                case.risk_score = result.risk_score
+                case.risk_level = result.risk_level
+                case.reasons = result.reasons
+                case.evidence = result.evidence
+                case.analysis_complete = result.analysis_complete
                 case.threat_id = threat.id
+                case.threat_dna = result.threat_dna
+                case.campaign_id = result.campaign_id
+                case.mutation_class = result.mutation_class
+                case.intent_class = result.intent_class
                 await session.flush()
 
-            # 5. Dispatch to Antigravity only if analysis is complete and above configured risk threshold
-            if is_available and risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY and not case.antigravity_event_id:
+            # 4. Dispatch to Antigravity only when analysis is complete and above threshold
+            if (
+                result.analysis_complete
+                and result.risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY
+                and not case.antigravity_event_id
+            ):
                 event_payload = AntigravityRiskEventPayload(
                     case_id=case.id,
                     channel=case.channel,

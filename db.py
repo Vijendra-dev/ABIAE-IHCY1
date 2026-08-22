@@ -51,7 +51,15 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # SQLite schema migration fallback for existing databases
-        try:
-            await conn.execute(text("ALTER TABLE cases ADD COLUMN analysis_complete BOOLEAN DEFAULT 1"))
-        except Exception:
-            pass
+        _migrations = [
+            "ALTER TABLE cases ADD COLUMN analysis_complete BOOLEAN DEFAULT 1",
+            "ALTER TABLE cases ADD COLUMN threat_dna TEXT",
+            "ALTER TABLE cases ADD COLUMN campaign_id TEXT",
+            "ALTER TABLE cases ADD COLUMN mutation_class TEXT",
+            "ALTER TABLE cases ADD COLUMN intent_class TEXT",
+        ]
+        for sql in _migrations:
+            try:
+                await conn.execute(text(sql))
+            except Exception:
+                pass  # Column already exists — safe to ignore
