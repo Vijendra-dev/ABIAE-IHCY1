@@ -47,5 +47,11 @@ async def init_db() -> None:
     """
     Creates all database tables defined in models.py if they do not exist.
     """
+    from sqlalchemy import text
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # SQLite schema migration fallback for existing databases
+        try:
+            await conn.execute(text("ALTER TABLE cases ADD COLUMN analysis_complete BOOLEAN DEFAULT 1"))
+        except Exception:
+            pass

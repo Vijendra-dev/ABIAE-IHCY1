@@ -41,7 +41,7 @@ class TrustLensClient:
 
         # Circuit breaker: if service recently failed to connect, immediately use fallback
         if time.time() < self._offline_until:
-            return self._fallback_analysis(url, error="TrustLens service offline (circuit open)")
+            return self._unavailable_fallback_analysis(url, error="TrustLens service offline (circuit open)")
 
         logger.info("Calling TrustLens-AI for URL: %s (endpoint: %s)", url, endpoint)
 
@@ -60,7 +60,7 @@ class TrustLensClient:
                         response.status_code,
                         response.text[:200]
                     )
-                    return self._fallback_analysis(url, error=f"HTTP {response.status_code}")
+                    return self._unavailable_fallback_analysis(url, error=f"HTTP {response.status_code}")
 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError) as e:
             self._offline_until = time.time() + 5.0
@@ -69,7 +69,7 @@ class TrustLensClient:
                 endpoint,
                 str(e)
             )
-            return self._fallback_analysis(url, error=str(e))
+            return self._unavailable_fallback_analysis(url, error=str(e))
 
     def _normalize_response(self, data: Dict[str, Any], url: str) -> Dict[str, Any]:
         """
@@ -94,57 +94,25 @@ class TrustLensClient:
             "html_snapshot_url": html_snapshot_url,
             "url": url,
             "success": True,
+            "fallback": False,
         }
 
-    def _fallback_analysis(self, url: str, error: Optional[str] = None) -> Dict[str, Any]:
+    def _unavailable_fallback_analysis(self, url: str, error: Optional[str] = None) -> Dict[str, Any]:
         """
-        Deterministic fallback analysis when TrustLens-AI microservice is offline or in mock mode.
-        Simulates explainable heuristic insights for lookalike URLs.
+        Explicit non-authoritative fallback when TrustLens-AI microservice is offline or unreachable.
+        Does NOT fabricate engine findings or trust scores.
         """
-        url_lower = url.lower()
-
-        # Heuristic trust score calculation based on common phishing indicators
-        trust_score = 15.0 if any(k in url_lower for k in ["login", "verify", "secure", "signin", "auth"]) else 35.0
-        risk_level = "HIGH" if trust_score < 30 else "MEDIUM"
-
-        reasons = [
-            "Suspicious hostname structure with brand impersonation signals",
-            "Newly observed certificate authority or self-signed SSL profile",
-            "Target domain matches known typosquatting homoglyph patterns",
-        ]
+        reason = "TrustLens-AI service unavailable — no live inspection performed"
         if error:
-            reasons.append(f"[TrustLens Offline Fallback: {error}]")
-
-        engines = {
-            "ssl_engine": {
-                "valid": True,
-                "issuer": "Let's Encrypt / Automated Short-Lived Cert",
-                "days_to_expiry": 14,
-                "suspicious_cert": True,
-            },
-            "dns_engine": {
-                "resolved": True,
-                "fast_flux_detected": False,
-                "has_mx_record": False,
-            },
-            "content_engine": {
-                "impersonation_score": 0.88,
-                "has_credential_input": True,
-                "hidden_iframe_detected": False,
-            },
-            "brand_engine": {
-                "visual_similarity_score": 0.82,
-                "logo_detected": True,
-            }
-        }
+            reason += f" ({error})"
 
         return {
-            "trustScore": trust_score,
-            "riskLevel": risk_level,
-            "reasons": reasons,
-            "engines": engines,
-            "screenshot_url": f"https://evidence-storage.local/screenshots/{abs(hash(url))}.png",
-            "html_snapshot_url": f"https://evidence-storage.local/snapshots/{abs(hash(url))}.html",
+            "trustScore": None,
+            "riskLevel": "UNKNOWN",
+            "reasons": [reason],
+            "engines": {"unavailable": True},
+            "screenshot_url": None,
+            "html_snapshot_url": None,
             "url": url,
             "success": False,
             "fallback": True,

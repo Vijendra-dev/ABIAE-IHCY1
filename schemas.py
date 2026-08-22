@@ -101,12 +101,14 @@ class TrustLensEngineResult(BaseModel):
 
 
 class TrustLensAnalyzeResponse(BaseModel):
-    trustScore: float = Field(description="0 to 100 trust score (100 is completely safe, 0 is dangerous)")
-    riskLevel: str = Field(description="LOW, MEDIUM, or HIGH")
+    trustScore: Optional[float] = Field(default=None, description="0 to 100 trust score (None if service unavailable)")
+    riskLevel: str = Field(default="UNKNOWN", description="LOW, MEDIUM, HIGH, or UNKNOWN")
     reasons: List[str] = Field(default_factory=list, description="Human readable explainable security reasons")
     engines: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Engine specific telemetry")
     screenshot_url: Optional[str] = Field(default=None, description="Visual screenshot evidence URL")
     html_snapshot_url: Optional[str] = Field(default=None, description="Captured DOM snapshot URL")
+    success: bool = Field(default=True, description="Whether analysis succeeded with live engine")
+    fallback: bool = Field(default=False, description="Whether fallback analysis was used")
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ class CaseResponse(BaseModel):
     risk_level: str
     reasons: List[str]
     evidence: Dict[str, Any]
+    analysis_complete: bool = True
     antigravity_event_id: Optional[str] = None
     created_at: datetime
 
@@ -153,7 +156,7 @@ class AntigravityRiskEventPayload(BaseModel):
     channel: str = "web_domain"
     target: str
     risk_score: int
-    risk_level: Literal["LOW", "MEDIUM", "HIGH"]
+    risk_level: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
     reasons: List[str]
     evidence: Dict[str, Any]
     recommended_action: str = "takedown_phishing"

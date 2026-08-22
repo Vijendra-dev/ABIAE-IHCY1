@@ -85,7 +85,11 @@ async function inspectUrl(targetUrl) {
     const data = await response.json();
     activeResult = data;
     renderResults(data);
-    showToast(`Analysis completed for ${data.domain || cleanUrl}!`, "success");
+    if (data.analysis_complete === false) {
+      showToast("TrustLens-AI unavailable — risk score is partial, based on domain similarity only", "warning");
+    } else {
+      showToast(`Analysis completed for ${data.domain || cleanUrl}!`, "success");
+    }
 
     // Smooth scroll to results
     elements.resultsSection.scrollIntoView({ behavior: "smooth" });
@@ -103,8 +107,18 @@ async function inspectUrl(targetUrl) {
 function renderResults(data) {
   elements.resultsSection.classList.remove("hidden");
 
+  // Toggle warning banner
+  const warningBanner = document.getElementById("warning-banner");
+  if (warningBanner) {
+    if (data.analysis_complete === false) {
+      warningBanner.classList.remove("hidden");
+    } else {
+      warningBanner.classList.add("hidden");
+    }
+  }
+
   // 1. Header Card & Badges
-  const riskLevel = data.risk_level || "MEDIUM";
+  const riskLevel = data.risk_level || (data.analysis_complete === false ? "UNKNOWN" : "MEDIUM");
   const riskScore = data.risk_score || 0;
   const brand = data.brand_detected || "None / Generic";
   const simPct = Math.round((data.similarity_score || 0) * 100);
@@ -112,15 +126,19 @@ function renderResults(data) {
   elements.resTargetUrl.textContent = data.target;
   elements.resBrandBadge.textContent = `Impersonating: ${brand.toUpperCase()} (${simPct}% Match)`;
   elements.resSimilarityVal.textContent = `${simPct}% (openSquat)`;
-  elements.resTrustVal.textContent = `${data.trust_score || 50}/100`;
-  elements.resAntigravityVal.textContent = data.antigravity_event_id || "Ready for Dispatch";
+  elements.resTrustVal.textContent = data.trust_score !== null && data.trust_score !== undefined ? `${data.trust_score}/100` : "Unavailable";
+  elements.resAntigravityVal.textContent = data.antigravity_event_id || (data.analysis_complete === false ? "Inspection Incomplete" : "Ready for Dispatch");
 
   // Risk Score Gauge styling
   elements.resRiskScore.textContent = riskScore;
-  elements.resRiskLevel.textContent = `${riskLevel} RISK`;
+  elements.resRiskLevel.textContent = riskLevel === "UNKNOWN" ? "PARTIAL / UNKNOWN" : `${riskLevel} RISK`;
 
-  const riskClass = riskLevel === "HIGH" ? "high-risk" : riskLevel === "MEDIUM" ? "medium-risk" : "low-risk";
-  const gaugeClass = riskScore >= 75 ? "score-high" : riskScore >= 45 ? "score-medium" : "score-low";
+  const riskClass = data.analysis_complete === false || riskLevel === "UNKNOWN"
+    ? "partial-risk"
+    : (riskLevel === "HIGH" ? "high-risk" : riskLevel === "MEDIUM" ? "medium-risk" : "low-risk");
+  const gaugeClass = data.analysis_complete === false
+    ? "score-partial"
+    : (riskScore >= 75 ? "score-high" : riskScore >= 45 ? "score-medium" : "score-low");
 
   elements.resultHeaderCard.className = `result-header-card ${riskClass}`;
   elements.resRiskGauge.className = `risk-gauge ${gaugeClass}`;

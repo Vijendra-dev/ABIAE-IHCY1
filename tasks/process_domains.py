@@ -87,23 +87,27 @@ class DomainThreatProcessor:
 
             try:
                 trustlens_result = await self.trustlens_client.analyze_url(target_url)
-                trust_score = trustlens_result.get("trustScore", 50.0)
+                is_available = bool(trustlens_result.get("success", False)) and not bool(trustlens_result.get("fallback", False))
+                trust_score = trustlens_result.get("trustScore")
                 trust_reasons = trustlens_result.get("reasons", [])
                 engine_details = trustlens_result.get("engines", {})
 
                 threat.trustlens_score = trust_score
                 threat.trustlens_reasons = trust_reasons
-                threat.status = "ANALYZED"
+                threat.status = "ANALYZED" if is_available else "TRUSTLENS_UNAVAILABLE"
             except Exception as e:
                 logger.error("Error analyzing %s with TrustLens-AI: %s", target_url, e)
-                threat.status = "FAILED"
-                trust_score = 30.0  # Conservative estimate
+                threat.status = "TRUSTLENS_UNAVAILABLE"
+                is_available = False
+                trust_score = None
                 trust_reasons = [f"TrustLens automated analysis failed: {str(e)}"]
-                engine_details = {}
+                engine_details = {"unavailable": True}
                 trustlens_result = {
-                    "trustScore": trust_score,
+                    "trustScore": None,
                     "reasons": trust_reasons,
-                    "engines": {},
+                    "engines": {"unavailable": True},
+                    "success": False,
+                    "fallback": True,
                 }
 
             await session.flush()
@@ -114,6 +118,7 @@ class DomainThreatProcessor:
                 trustlens_score=trust_score,
                 vt_reputation=vt_reputation,
                 engine_details=engine_details,
+                trustlens_available=is_available,
             )
 
             combined_reasons = RiskScorer.aggregate_reasons(
@@ -123,6 +128,7 @@ class DomainThreatProcessor:
                 trustlens_reasons=trust_reasons,
                 vt_reputation=vt_reputation,
                 engine_details=engine_details,
+                trustlens_available=is_available,
             )
 
             evidence_obj = RiskScorer.build_evidence_package(
@@ -148,6 +154,7 @@ class DomainThreatProcessor:
                     risk_level=risk_level,
                     reasons=combined_reasons,
                     evidence=evidence_obj,
+                    analysis_complete=is_available,
                 )
                 session.add(case)
                 await session.flush()
@@ -156,11 +163,12 @@ class DomainThreatProcessor:
                 case.risk_level = risk_level
                 case.reasons = combined_reasons
                 case.evidence = evidence_obj
+                case.analysis_complete = is_available
                 case.threat_id = threat.id
                 await session.flush()
 
-            # 5. Dispatch to Antigravity if above configured risk threshold
-            if risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY and not case.antigravity_event_id:
+            # 5. Dispatch to Antigravity only if analysis is complete and above configured risk threshold
+            if is_available and risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY and not case.antigravity_event_id:
                 event_payload = AntigravityRiskEventPayload(
                     case_id=case.id,
                     channel=case.channel,

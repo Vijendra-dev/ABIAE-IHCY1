@@ -253,8 +253,9 @@ async def inspect_single_url(
     # 2. Call TrustLens-AI
     trustlens_client = TrustLensClient()
     trustlens_res = await trustlens_client.analyze_url(target_url)
+    is_available = bool(trustlens_res.get("success", False)) and not bool(trustlens_res.get("fallback", False))
 
-    trust_score = trustlens_res.get("trustScore", 50.0)
+    trust_score = trustlens_res.get("trustScore")
     trust_reasons = trustlens_res.get("reasons", [])
     engine_details = trustlens_res.get("engines", {})
 
@@ -270,6 +271,7 @@ async def inspect_single_url(
         trustlens_score=trust_score,
         vt_reputation=vt_reputation,
         engine_details=engine_details,
+        trustlens_available=is_available,
     )
 
     combined_reasons = RiskScorer.aggregate_reasons(
@@ -279,6 +281,7 @@ async def inspect_single_url(
         trustlens_reasons=trust_reasons,
         vt_reputation=vt_reputation,
         engine_details=engine_details,
+        trustlens_available=is_available,
     )
 
     evidence_obj = RiskScorer.build_evidence_package(
@@ -304,6 +307,7 @@ async def inspect_single_url(
             risk_level=risk_level,
             reasons=combined_reasons,
             evidence=evidence_obj,
+            analysis_complete=is_available,
         )
         db.add(case)
         await db.commit()
@@ -313,11 +317,12 @@ async def inspect_single_url(
         case.risk_level = risk_level
         case.reasons = combined_reasons
         case.evidence = evidence_obj
+        case.analysis_complete = is_available
         await db.commit()
         await db.refresh(case)
 
-    # Dispatch to Antigravity if above threshold
-    if risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY and not case.antigravity_event_id:
+    # Dispatch to Antigravity only when deep analysis is complete and above threshold
+    if is_available and risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY and not case.antigravity_event_id:
         ag_client = AntigravityClient()
         event_payload = AntigravityRiskEventPayload(
             case_id=case.id,
@@ -345,6 +350,7 @@ async def inspect_single_url(
         "risk_level": risk_level,
         "reasons": combined_reasons,
         "evidence": evidence_obj,
+        "analysis_complete": is_available,
         "antigravity_event_id": case.antigravity_event_id,
     }
 

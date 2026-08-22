@@ -681,6 +681,50 @@ body {
 .toast.success { border-left: 4px solid var(--accent-green); }
 .toast.error { border-left: 4px solid var(--accent-red); }
 .toast.info { border-left: 4px solid var(--accent-cyan); }
+.toast.warning { border-left: 4px solid var(--accent-yellow); }
+
+/* Warning Banner for Degraded TrustLens */
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  color: #fde68a;
+  font-size: 0.9rem;
+  font-weight: 500;
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.15);
+  animation: toast-in 0.3s ease;
+}
+
+.warning-banner-icon {
+  width: 28px;
+  height: 28px;
+  color: #fbbf24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.warning-banner-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.result-header-card.partial-risk {
+  border-color: rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.1);
+}
+
+.risk-gauge.score-partial {
+  border-color: #fbbf24;
+  color: #fbbf24;
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.3);
+}
 
 @keyframes toast-in {
   from { transform: translateY(20px); opacity: 0; }

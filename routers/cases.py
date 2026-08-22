@@ -146,8 +146,9 @@ async def reevaluate_case(
     # Call TrustLens
     trustlens_client = TrustLensClient()
     trustlens_res = await trustlens_client.analyze_url(case.target)
+    is_available = bool(trustlens_res.get("success", False)) and not bool(trustlens_res.get("fallback", False))
 
-    trust_score = trustlens_res.get("trustScore", 50.0)
+    trust_score = trustlens_res.get("trustScore")
     trust_reasons = trustlens_res.get("reasons", [])
     engine_details = trustlens_res.get("engines", {})
 
@@ -157,6 +158,7 @@ async def reevaluate_case(
         trustlens_score=trust_score,
         vt_reputation=vt_reputation,
         engine_details=engine_details,
+        trustlens_available=is_available,
     )
 
     combined_reasons = RiskScorer.aggregate_reasons(
@@ -166,6 +168,7 @@ async def reevaluate_case(
         trustlens_reasons=trust_reasons,
         vt_reputation=vt_reputation,
         engine_details=engine_details,
+        trustlens_available=is_available,
     )
 
     evidence_obj = RiskScorer.build_evidence_package(
@@ -181,9 +184,10 @@ async def reevaluate_case(
     case.risk_level = new_risk_level
     case.reasons = combined_reasons
     case.evidence = evidence_obj
+    case.analysis_complete = is_available
 
-    # Check Antigravity dispatch
-    if new_risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY:
+    # Check Antigravity dispatch only if analysis is complete and meets threshold
+    if is_available and new_risk_score >= settings.RISK_THRESHOLD_FOR_ANTIGRAVITY:
         antigravity_client = AntigravityClient()
         event_payload = AntigravityRiskEventPayload(
             case_id=case.id,

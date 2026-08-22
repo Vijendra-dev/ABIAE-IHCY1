@@ -5,7 +5,7 @@ into a unified Case risk score (0-100), risk level (LOW/MEDIUM/HIGH), and consol
 """
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +18,16 @@ class RiskScorer:
     @staticmethod
     def calculate_combined_risk(
         similarity_score: float,
-        trustlens_score: float,
+        trustlens_score: Optional[float] = None,
         vt_reputation: Dict[str, Any] = None,
         engine_details: Dict[str, Any] = None,
+        trustlens_available: bool = True,
     ) -> Tuple[int, str]:
         """
         Calculates unified Case risk score (0-100) and risk level category.
+        When trustlens_available is False (or trustlens_score is None), relies only
+        on openSquat domain similarity and returns risk_level="UNKNOWN" without
+        fabricating evidence.
 
         Formula:
         - Squat Risk: similarity_score (0.0 to 1.0) scaled to 0-100.
@@ -36,9 +40,14 @@ class RiskScorer:
         """
         # Normalize inputs
         sim = max(0.0, min(1.0, float(similarity_score)))
-        trust = max(0.0, min(100.0, float(trustlens_score)))
-
         squat_risk = sim * 100.0
+
+        if not trustlens_available or trustlens_score is None:
+            # Degraded calculation: based solely on domain similarity without fabricated evidence
+            final_score = int(round(min(100.0, max(0.0, squat_risk))))
+            return final_score, "UNKNOWN"
+
+        trust = max(0.0, min(100.0, float(trustlens_score)))
         trust_risk = 100.0 - trust
 
         weighted_risk = (0.45 * squat_risk) + (0.55 * trust_risk)
@@ -50,7 +59,7 @@ class RiskScorer:
             if malicious_votes > 0:
                 bonus += min(15.0, malicious_votes * 5.0)
 
-        if engine_details:
+        if engine_details and trustlens_available:
             content_engine = engine_details.get("content_engine", {})
             if content_engine.get("has_credential_input") or content_engine.get("suspicious_form_detected"):
                 bonus += 8.0
@@ -78,6 +87,7 @@ class RiskScorer:
         trustlens_reasons: List[str],
         vt_reputation: Dict[str, Any] = None,
         engine_details: Dict[str, Any] = None,
+        trustlens_available: bool = True,
     ) -> List[str]:
         """
         Produces a deduplicated, prioritized list of human-readable risk reasons.
@@ -108,7 +118,7 @@ class RiskScorer:
                     reasons.append(clean_r)
 
         # 4. Engine-specific signals
-        if engine_details:
+        if engine_details and trustlens_available:
             content_eng = engine_details.get("content_engine", {})
             if content_eng.get("has_credential_input"):
                 reasons.append("Phishing credential capture form discovered on active landing page")

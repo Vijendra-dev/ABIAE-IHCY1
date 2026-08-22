@@ -74,3 +74,74 @@ async def test_scans_and_cases_lifecycle():
         assert filtered_res.status_code == 200
         for c in filtered_res.json()["items"]:
             assert c["risk_level"] == "HIGH"
+
+
+@pytest.mark.asyncio
+async def test_inspect_url_trustlens_unavailable():
+    """
+    Tests inspect-url endpoint when TrustLens is unreachable:
+    analysis_complete should be False, risk_level UNKNOWN, and trust_score None.
+    """
+    from unittest.mock import AsyncMock, patch
+    from services.trustlens_client import TrustLensClient
+
+    mock_unavailable = {
+        "trustScore": None,
+        "riskLevel": "UNKNOWN",
+        "reasons": ["TrustLens-AI service unavailable — no live inspection performed"],
+        "engines": {"unavailable": True},
+        "screenshot_url": None,
+        "html_snapshot_url": None,
+        "url": "https://paypa1-security.com",
+        "success": False,
+        "fallback": True,
+    }
+
+    transport = ASGITransport(app=app)
+    with patch.object(TrustLensClient, "analyze_url", new_callable=AsyncMock) as mock_analyze:
+        mock_analyze.return_value = mock_unavailable
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post("/scans/inspect-url", json={"url": "https://paypa1-security.com"})
+            assert res.status_code == 200
+            data = res.json()
+            assert data["analysis_complete"] is False
+            assert data["risk_level"] == "UNKNOWN"
+            assert data["trust_score"] is None
+            assert data["antigravity_event_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_inspect_url_trustlens_available():
+    """
+    Tests inspect-url endpoint when TrustLens is reachable:
+    analysis_complete should be True, risk_level HIGH/MEDIUM, and trust_score float.
+    """
+    from unittest.mock import AsyncMock, patch
+    from services.trustlens_client import TrustLensClient
+
+    mock_online = {
+        "trustScore": 12.0,
+        "riskLevel": "HIGH",
+        "reasons": ["Credential harvesting form detected on landing page"],
+        "engines": {
+            "content_engine": {"has_credential_input": True},
+            "brand_engine": {"logo_detected": True, "visual_similarity_score": 0.92}
+        },
+        "screenshot_url": "https://storage.test/shot.png",
+        "html_snapshot_url": "https://storage.test/dom.html",
+        "url": "https://paypa1-security.com",
+        "success": True,
+        "fallback": False,
+    }
+
+    transport = ASGITransport(app=app)
+    with patch.object(TrustLensClient, "analyze_url", new_callable=AsyncMock) as mock_analyze:
+        mock_analyze.return_value = mock_online
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post("/scans/inspect-url", json={"url": "https://paypa1-security.com"})
+            assert res.status_code == 200
+            data = res.json()
+            assert data["analysis_complete"] is True
+            assert data["risk_score"] >= 75
+            assert data["risk_level"] == "HIGH"
+            assert data["trust_score"] == 12.0

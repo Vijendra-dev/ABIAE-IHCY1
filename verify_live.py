@@ -13,8 +13,9 @@ r = httpx.post("http://127.0.0.1:8000/scans/inspect-url", json={"url": "https://
 d = r.json()
 print("Target:     ", d["target"])
 print("Brand:      ", d["brand_detected"], "(" + str(round(d["similarity_score"] * 100)) + "% match)")
-print("Trust Score:", d["trust_score"], "/ 100")
+print("Trust Score:", d["trust_score"] if d["trust_score"] is not None else "Unavailable")
 print("Risk Score: ", d["risk_score"], "/ 100 (" + d["risk_level"] + ")")
+print("Analysis:   ", "Complete" if d.get("analysis_complete", True) else "Partial (TrustLens unavailable)")
 print("Reasons:")
 for reason in d["reasons"]:
     print("  -", reason)

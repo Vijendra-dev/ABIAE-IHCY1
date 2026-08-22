@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
 import os
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -35,6 +36,26 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Brand Intelligence Backend...")
     await init_db()
     logger.info("Database schema initialized.")
+
+    # Validate TrustLens-AI microservice connectivity at startup
+    try:
+        tl_base = settings.TRUSTLENS_BASE_URL.rstrip("/")
+        if "localhost" in tl_base:
+            tl_base = tl_base.replace("localhost", "127.0.0.1")
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{tl_base}/health")
+            if resp.status_code == 200:
+                logger.info("TrustLens-AI service is reachable and healthy at %s", settings.TRUSTLENS_BASE_URL)
+            else:
+                logger.warning(
+                    "⚠️ [WARNING] TrustLens-AI service at %s returned status %d. Running in degraded mode (domain similarity only).",
+                    settings.TRUSTLENS_BASE_URL, resp.status_code
+                )
+    except Exception as e:
+        logger.warning(
+            "⚠️ [WARNING] TrustLens-AI service is UNREACHABLE at %s (%s). Running in degraded mode (domain similarity only). Inspections will be marked analysis_complete=False.",
+            settings.TRUSTLENS_BASE_URL, e
+        )
 
     # Start periodic background scan scheduler
     start_scheduler()

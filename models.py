@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     DateTime,
     JSON,
+    Boolean,
     ForeignKey,
     Text,
 )
@@ -79,9 +80,10 @@ class Case(Base):
     channel = Column(String(50), default="web_domain", index=True)
     target = Column(String(512), nullable=False, index=True)  # e.g., https://paypa1-secure-login.com
     risk_score = Column(Integer, nullable=False, index=True)  # 0 to 100
-    risk_level = Column(String(20), nullable=False, index=True)  # LOW, MEDIUM, HIGH
+    risk_level = Column(String(20), nullable=False, index=True)  # LOW, MEDIUM, HIGH, UNKNOWN
     reasons = Column(JSON, nullable=False, default=list)  # Combined human-readable explanation strings
     evidence = Column(JSON, nullable=False, default=dict)  # Screenshot, HTML snapshot, DNS, SSL, engine details
+    analysis_complete = Column(Boolean, default=True, index=True)
     antigravity_event_id = Column(String(100), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
